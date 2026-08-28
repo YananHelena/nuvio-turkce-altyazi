@@ -10,8 +10,8 @@ const PORT = process.env.PORT || 10000;
 
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
-    version: "1.1.9", // Nokta Atışı Link Filtreleme
-    name: "Türkçe Altyazı (Direct v2)",
+    version: "1.2.0", // HTML Kaynağından Çıkartılan Gerçek Form Mimarisi
+    name: "Türkçe Altyazı (Ultimate)",
     description: "Nuvio için TurkceAltyazi.org altyazı eklentisi.",
     resources: ["subtitles"],
     types: ["movie", "series"],
@@ -85,40 +85,55 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     return subtitles;
 }
 
-// PROXY İNDİRİCİ: Filtrelenmiş ve Güvenli GET İsteği
+// PROXY İNDİRİCİ: Gerçek Form Parametreleri ve /ind Uç Noktası
 app.get('/download/:subId.srt', async (req, res) => {
     const subId = req.params.subId;
     console.log(`\n>>> Nuvio Altyazı İndiriyor (ID: ${subId})...`);
 
     try {
         const detailUrl = subPageCache.get(subId) || `https://www.turkcealtyazi.org/sub/${subId}/altyazi.html`;
+        const sessionNum = Math.floor(Math.random() * 900000) + 100000;
         
-        console.log(`1. AŞAMA: Sayfa analiz ediliyor -> ${detailUrl}`);
+        console.log(`1. AŞAMA: Sayfa ziyaret ediliyor -> ${detailUrl} (Session: ${sessionNum})`);
         
-        const scraperDetailUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(detailUrl)}`;
+        const scraperDetailUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&keep_headers=true&url=${encodeURIComponent(detailUrl)}`;
         const detailRes = await axios.get(scraperDetailUrl, { headers: BROWSER_HEADERS, timeout: 60000 });
         
+        const cookies = detailRes.headers['set-cookie'] || [];
+        const cookieString = cookies.map(c => c.split(';')[0]).join('; ');
+
         const $ = cheerio.load(detailRes.data);
         
-        let directDownloadLink = "";
-        $("a").each((i, el) => {
-            const href = $(el).attr("href") || "";
-            // KİRİTİK FİLTRE: find.php gibi tuzak linkleri ele, sadece indirme veya zip linklerini al!
-            if ((href.includes("ind.php") || href.includes("download") || href.endsWith(".zip")) && !href.includes("find.php")) {
-                directDownloadLink = href;
-            }
-        });
+        // HTML Kaynağındaki gibi input[name='idid'] içeren formu seçiyoruz
+        const form = $("form:has(input[name='idid'])").first();
+        
+        const inputs = {};
+        if (form.length > 0) {
+            form.find("input").each((i, el) => {
+                const name = $(el).attr("name");
+                if (name) inputs[name] = $(el).attr("value") || "";
+            });
+        } else {
+            inputs.idid = subId;
+        }
 
-        // Kesin çözüm: Doğrudan ind.php?id= formatını kullanmak her zaman en garantisidir
-        const downloadTarget = `https://www.turkcealtyazi.org/ind.php?id=${subId}`;
+        const postData = new URLSearchParams(inputs).toString();
+        
+        // KRİTİK DÜZELTME: Sitenin gerçek POST adresi /ind (ind.php değil!)
+        const formAction = "https://www.turkcealtyazi.org/ind";
+        
+        console.log(`2. AŞAMA: Hedef URL: ${formAction} | Yakalanan Veri: ${postData}`);
+        console.log("3. AŞAMA: ZIP dosyası çekiliyor...");
 
-        console.log(`2. AŞAMA: Kesin indirme adresi: ${downloadTarget}`);
-        console.log("3. AŞAMA: ZIP dosyası ScraperAPI üzerinden çekiliyor...");
+        const scraperDownloadUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&keep_headers=true&url=${encodeURIComponent(formAction)}`;
 
-        const scraperDownloadUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(downloadTarget)}`;
-
-        const zipRes = await axios.get(scraperDownloadUrl, {
-            headers: BROWSER_HEADERS,
+        const zipRes = await axios.post(scraperDownloadUrl, postData, {
+            headers: {
+                ...BROWSER_HEADERS,
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Referer': detailUrl,
+                'Cookie': cookieString
+            },
             responseType: 'arraybuffer',
             timeout: 90000 
         });
@@ -164,5 +179,5 @@ const addonRouter = getRouter(addonInterface);
 app.use("/", addonRouter);
 
 app.listen(PORT, () => {
-    console.log(`Direct v2 Sunucu Aktif! Port: ${PORT}`);
+    console.log(`Ultimate Sunucu Aktif! Port: ${PORT}`);
 });
