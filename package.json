@@ -1,7 +1,7 @@
 {
   "name": "nuvio-turkce-altyazi-addon",
-  "version": "1.0.0",
-  "description": "Nuvio ve Stremio için TurkceAltyazi.org altyazı eklentisi",
+  "version": "1.0.2",
+  "description": "Nuvio ve Stremio için TurkceAltyazi.org altyazı eklentisi (Proxy özellikli)",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,7 +9,9 @@
   "dependencies": {
     "axios": "^1.7.0",
     "cheerio": "^1.0.0-rc.12",
-    "stremio-addon-sdk": "^1.6.0"
+    "stremio-addon-sdk": "^1.6.0",
+    "adm-zip": "^0.5.10",
+    "iconv-lite": "^0.6.3"
   },
   "engines": {
     "node": ">=18.0.0"
