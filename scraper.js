@@ -5,10 +5,14 @@ const { createSubtitleService } = require('./lib/subtitleService');
 const { createTurkceAltyaziClient } = require('./lib/turkcealtyaziClient');
 
 function createDefaultSubtitleService(overrides = {}) {
+  const proxyUrl = Object.prototype.hasOwnProperty.call(overrides, 'proxyUrl')
+    ? overrides.proxyUrl
+    : config.proxyUrl;
   const client =
     overrides.client ||
     createTurkceAltyaziClient({
       baseUrl: overrides.upstreamBaseUrl || config.upstreamBaseUrl,
+      proxyUrl,
       timeoutMs: overrides.requestTimeoutMs || config.requestTimeoutMs,
       maxArchiveBytes: overrides.maxArchiveBytes || config.maxArchiveBytes,
       concurrency: overrides.upstreamConcurrency || config.upstreamConcurrency,
@@ -24,4 +28,3 @@ function createDefaultSubtitleService(overrides = {}) {
 module.exports = {
   createDefaultSubtitleService,
 };
-```[cite: 11]
