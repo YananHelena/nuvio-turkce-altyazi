@@ -44,30 +44,34 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     const response = await axios.get(scraperUrl, { timeout: 60000 }); 
     const $ = cheerio.load(response.data);
     
-    // İŞTE AJAN KODUMUZ: Sayfanın başlığını (Title) loga yazdıracak
-    const sayfaBasligi = $('title').text().trim();
-    console.log(">>> GELEN SAYFANIN BAŞLIĞI:", sayfaBasligi);
+    console.log(">>> GELEN SAYFANIN BAŞLIĞI:", $('title').text().trim());
 
     const results = [];
 
-    // Hem arama hem de direkt film sayfası için daha geniş seçiciler ekledik
-    $(".search-results tr, .al-table tr, div.al-row, div.altyazi-list-wrapper div.row").each((i, el) => {
-        const titleLink = $(el).find("a[href*='/sub/']").attr("href");
-        if (titleLink) {
-            results.push({
-                url: titleLink.startsWith("http") ? titleLink : `https://www.turkcealtyazi.org${titleLink}`,
-            });
+    // YENİ TAKTİK: Sayfadaki tüm linkleri (a etiketlerini) tara
+    $("a").each((i, el) => {
+        const titleLink = $(el).attr("href");
+        
+        // Eğer link varsa, "/sub/" ile başlıyor veya içeriyorsa ve ".html" ile bitiyorsa bu bir altyazı linkidir
+        if (titleLink && titleLink.includes("/sub/") && titleLink.includes(".html")) {
+            const fullUrl = titleLink.startsWith("http") ? titleLink : `https://www.turkcealtyazi.org${titleLink}`;
+            
+            // Aynı linki mükerrer olarak listeye eklememek için kontrol
+            if (!results.some(r => r.url === fullUrl)) {
+                results.push({ url: fullUrl });
+            }
         }
     });
 
     console.log(">>> HTML'den Çıkarılan Link Sayısı:", results.length);
 
+    // Nuvio'ya en fazla ilk 5 sonucu gönderiyoruz
     for (let i = 0; i < Math.min(results.length, 5); i++) {
         subtitles.push({
             id: `ta_${imdbId}_${i}`,
-            url: results[i].url,
+            url: results[i].url, // Nuvio için tıklanabilir altyazı linki
             lang: "tur",
-            label: `[TR] TurkceAltyazi.org - Seçenek ${i + 1}`
+            label: `[TR] TurkceAltyazi.org - Çeviri ${i + 1}`
         });
     }
 
