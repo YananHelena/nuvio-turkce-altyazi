@@ -4,14 +4,13 @@ const cheerio = require("cheerio");
 const AdmZip = require("adm-zip");
 const iconv = require("iconv-lite");
 const express = require("express");
-const qs = require('querystring');
 
 const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY; 
 const PORT = process.env.PORT || 10000;
 
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
-    version: "1.0.5", // Önbelleği kırmak için sürümü 1.0.5 yaptık
+    version: "1.0.6", // Önbelleği kırmak için güncelledik
     name: "Türkçe Altyazı (TurkceAltyazi.org)",
     description: "Nuvio için TurkceAltyazi.org sitesinden otomatik Türkçe altyazı çeker ve çıkarır.",
     resources: ["subtitles"],
@@ -78,34 +77,47 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     return subtitles;
 }
 
-// 2. AŞAMA: PROXY İNDİRİCİ (GİZLİ SİLAHLARLA DONATILMIŞ)
+// 2. AŞAMA: PROXY İNDİRİCİ (Kusursuz POST ve Dosya Dedektifi)
 app.get('/download/:subId.srt', async (req, res) => {
     const subId = req.params.subId;
     console.log(`\n>>> Nuvio Altyazı İndiriyor (ID: ${subId})...`);
 
     try {
-        // İndirme işleminin URL'si
-        const targetDownloadUrl = `https://www.turkcealtyazi.org/ind.php?id=${subId}`;
+        // HATA DÜZELTMESİ 1: URL sadece ind.php olmalı
+        const targetDownloadUrl = `https://www.turkcealtyazi.org/ind.php`;
         
-        // DİKKAT: binary_target=true ve keep_headers=true eklendi!
-        const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(targetDownloadUrl)}&binary_target=true&keep_headers=true`;
+        // HATA DÜZELTMESİ 2: keep_headers=true kaldırıldı! Sadece binary_target kaldı.
+        const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(targetDownloadUrl)}&binary_target=true`;
         
-        console.log("ScraperAPI peleriniyle ZIP dosyası indiriliyor...");
-        
-        // Sitenin beklediği form verisi
-        const postData = qs.stringify({ idid: subId });
+        const postData = `idid=${subId}`;
 
-        // ScraperAPI'ye POST atıyoruz, o da siteye POST atıyor
+        console.log("ScraperAPI üzerinden gizli form (POST) gönderiliyor...");
+        
         const response = await axios.post(scraperUrl, postData, {
             headers: { 
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Referer': `https://www.turkcealtyazi.org/sub/${subId}/a.html`
+                'Content-Type': 'application/x-www-form-urlencoded'
             },
             responseType: 'arraybuffer', 
             timeout: 60000 
         });
         
-        const zip = new AdmZip(response.data);
+        // DOSYA DEDEKTİFİ: İndirilen verinin ne olduğunu kontrol edelim
+        const buffer = Buffer.from(response.data);
+        const headerText = buffer.toString('utf8', 0, 4);
+
+        if (headerText.startsWith('Rar!')) {
+            console.error(">>> DEDEKTİF RAPORU: Bu bir RAR dosyası! (Şu an kodumuz sadece ZIP açabiliyor)");
+            return res.status(400).send("RAR dosya formati desteklenmiyor.");
+        } else if (!headerText.startsWith('PK')) {
+            // ZIP dosyaları her zaman "PK" harfleriyle başlar. Başlamıyorsa sitenin HTML'ini (Cloudflare sayfasını) indirmişiz demektir.
+            console.error(">>> DEDEKTİF RAPORU: Bu bir ZIP dosyası değil! Site muhtemelen HTML veya Hata sayfası gönderdi.");
+            // console.log("Gelen İçerik (İlk 100 Karakter):", buffer.toString('utf8', 0, 100));
+            return res.status(500).send("Geçersiz dosya formatı.");
+        }
+
+        console.log(">>> DEDEKTİF RAPORU: Geçerli bir ZIP dosyası yakalandı. Çıkartılıyor...");
+        
+        const zip = new AdmZip(buffer);
         const zipEntries = zip.getEntries();
         
         let srtEntry = zipEntries.find(entry => entry.entryName.toLowerCase().endsWith('.srt'));
@@ -119,7 +131,7 @@ app.get('/download/:subId.srt', async (req, res) => {
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Content-Disposition', `attachment; filename="${subId}.srt"`);
             res.send(utf8Srt);
-            console.log("Altyazı başarıyla Nuvio'ya gönderildi!");
+            console.log("Altyazı başarıyla Nuvio'ya gönderildi! 🎉");
         } else {
             console.error("Hata: ZIP içinde .srt dosyası bulunamadı.");
             res.status(404).send("Altyazı dosyası bulunamadı.");
