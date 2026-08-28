@@ -1,19 +1,16 @@
 const { addonBuilder, getRouter } = require("stremio-addon-sdk");
-const axios = require("axios");
 const cheerio = require("cheerio");
 const AdmZip = require("adm-zip");
 const iconv = require("iconv-lite");
 const express = require("express");
-const qs = require("querystring");
 
 const PORT = process.env.PORT || 10000;
-// ScraperAPI'yi tamamen devreden çıkardık, doğrudan bağlantı kullanıyoruz!
 
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
-    version: "1.1.0", // YENİ DÖNEM!
-    name: "Türkçe Altyazı (Doğrudan)",
-    description: "Nuvio için TurkceAltyazi.org sitesinden aracısız (ScraperAPI olmadan) hızlı Türkçe altyazı çeker.",
+    version: "1.1.1", // NİHAİ SÜRÜM - Native Fetch
+    name: "Türkçe Altyazı (Pro)",
+    description: "Nuvio için TurkceAltyazi.org sitesinden Cloudflare korumasını aşarak doğrudan altyazı çeker.",
     resources: ["subtitles"],
     types: ["movie", "series"],
     idPrefixes: ["tt"],
@@ -23,9 +20,13 @@ const manifest = {
 const builder = new addonBuilder(manifest);
 const app = express(); 
 
-// Standart bir tarayıcı (Chrome) kimliği
-const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+// Cloudflare'i atlatacak kusursuz "Gerçek Tarayıcı" başlıklarımız
+const BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Upgrade-Insecure-Requests": "1",
+    "Cache-Control": "max-age=0"
 };
 
 builder.defineSubtitlesHandler(async (args) => {
@@ -47,11 +48,14 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     const subtitles = [];
     const targetUrl = `https://www.turkcealtyazi.org/find.php?cat=sub&find=${imdbId}`;
     
-    console.log("Siteye doğrudan arama isteği atılıyor (ScraperAPI Yok)...");
+    console.log("Siteye Native Fetch ile (Axios olmadan) arama isteği atılıyor...");
     
-    // Doğrudan axios ile bağlanıyoruz
-    const response = await axios.get(targetUrl, { headers: HEADERS, timeout: 15000 }); 
-    const $ = cheerio.load(response.data);
+    // YENİ: Native Fetch kullanımı
+    const response = await fetch(targetUrl, { headers: BROWSER_HEADERS });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    
+    const htmlData = await response.text();
+    const $ = cheerio.load(htmlData);
     const results = [];
 
     $("a").each((i, el) => {
@@ -82,7 +86,7 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     return subtitles;
 }
 
-// 2. AŞAMA: PROXY İNDİRİCİ (ÇEREZ YÖNETİMLİ DOĞRUDAN BAĞLANTI)
+// 2. AŞAMA: PROXY İNDİRİCİ (NATIVE FETCH + COOKIE + URLSearchParams)
 app.get('/download/:subId.srt', async (req, res) => {
     const subId = req.params.subId;
     console.log(`\n>>> Nuvio Altyazı İndiriyor (ID: ${subId})...`);
@@ -90,14 +94,24 @@ app.get('/download/:subId.srt', async (req, res) => {
     try {
         const detailUrl = `https://www.turkcealtyazi.org/sub/${subId}/altyazi.html`;
         
-        console.log("1. AŞAMA: Altyazı sayfasına gidilip ÇEREZLER (Cookies) alınıyor...");
-        const detailRes = await axios.get(detailUrl, { headers: HEADERS, timeout: 15000 });
+        console.log("1. AŞAMA: Altyazı sayfasına gidilip ÇEREZLER alınıyor...");
+        const detailRes = await fetch(detailUrl, { headers: BROWSER_HEADERS });
         
-        // Sitenin bize verdiği özel kimliği (Çerezleri) alıp cüzdanımıza koyuyoruz
-        const cookies = detailRes.headers['set-cookie'] || [];
-        const cookieString = cookies.map(c => c.split(';')[0]).join('; ');
+        if (!detailRes.ok) {
+            throw new Error(`Detay Sayfası Hatası: HTTP ${detailRes.status}`);
+        }
 
-        const $ = cheerio.load(detailRes.data);
+        // Fetch API ile çerezleri (Cookies) profesyonelce ayıklıyoruz
+        let cookieString = "";
+        if (detailRes.headers.getSetCookie) {
+            cookieString = detailRes.headers.getSetCookie().map(c => c.split(';')[0]).join('; ');
+        } else {
+            const rawCookies = detailRes.headers.get('set-cookie');
+            if (rawCookies) cookieString = rawCookies.split(',').map(c => c.split(';')[0]).join('; ');
+        }
+
+        const htmlData = await detailRes.text();
+        const $ = cheerio.load(htmlData);
         const form = $("form:has(input[name='idid'])").first();
 
         if (form.length === 0) {
@@ -105,37 +119,42 @@ app.get('/download/:subId.srt', async (req, res) => {
             return res.status(404).send("Form bulunamadı.");
         }
 
-        const inputs = {};
+        // Form verilerini native URLSearchParams ile kodluyoruz
+        const postData = new URLSearchParams();
         form.find("input").each((i, el) => {
             const name = $(el).attr("name");
-            if (name) inputs[name] = $(el).attr("value") || "";
+            const val = $(el).attr("value");
+            if (name && val) postData.append(name, val);
         });
 
-        const postData = qs.stringify(inputs);
-        console.log(`2. AŞAMA: Form ve Şifreler hazır! Veri: ${postData}`);
-        console.log("3. AŞAMA: Çerezler (Cookies) kullanılarak ZIP indiriliyor...");
+        console.log(`2. AŞAMA: Şifreler hazır! ${postData.toString()}`);
+        console.log("3. AŞAMA: Çerezler ile ZIP indiriliyor (POST)...");
 
-        // Sitenin kalbine (ind.php) Formu ve ÇEREZİ aynı anda gönderiyoruz
-        const zipRes = await axios.post('https://www.turkcealtyazi.org/ind.php', postData, {
+        const zipRes = await fetch('https://www.turkcealtyazi.org/ind.php', {
+            method: 'POST',
             headers: {
-                ...HEADERS,
+                ...BROWSER_HEADERS,
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'Referer': detailUrl,
-                'Cookie': cookieString // İŞTE BİZİ 404'TEN KURTARAN SİHİRLİ SATIR
+                'Cookie': cookieString
             },
-            responseType: 'arraybuffer',
-            timeout: 15000
+            body: postData
         });
 
-        // DOSYA DEDEKTİFİ
-        const buffer = Buffer.from(zipRes.data);
+        if (!zipRes.ok) {
+            throw new Error(`ZIP İndirme Hatası: HTTP ${zipRes.status}`);
+        }
+
+        // Gelen veriyi Buffer'a çeviriyoruz
+        const arrayBuffer = await zipRes.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
         const headerText = buffer.toString('utf8', 0, 4);
 
         if (headerText.startsWith('Rar!')) {
             console.error(">>> HATA: Bu bir RAR dosyası!");
             return res.status(400).send("RAR formatı desteklenmiyor.");
         } else if (!headerText.startsWith('PK')) {
-            console.error(">>> HATA: ZIP dosyası gelmedi! Site reddetti.");
+            console.error(">>> HATA: ZIP dosyası gelmedi! Site HTML gönderdi.");
             return res.status(500).send("Geçersiz dosya formatı.");
         }
 
@@ -148,12 +167,12 @@ app.get('/download/:subId.srt', async (req, res) => {
 
         if (srtEntry) {
             let srtData = srtEntry.getData();
-            const utf8Srt = iconv.decode(srtData, 'win1254'); // Türkçe karakter düzeltmesi
+            const utf8Srt = iconv.decode(srtData, 'win1254'); 
 
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Content-Disposition', `attachment; filename="${subId}.srt"`);
             res.send(utf8Srt);
-            console.log(">>> MUHTEŞEM BAŞARI! Altyazı Nuvio'ya gönderildi! 🚀");
+            console.log(">>> GÖREV TAMAMLANDI! Altyazı Nuvio'da! 🚀");
         } else {
             console.error("Hata: ZIP içinde .srt dosyası bulunamadı.");
             res.status(404).send("Altyazı dosyası bulunamadı.");
@@ -169,5 +188,5 @@ const addonRouter = getRouter(addonInterface);
 app.use("/", addonRouter);
 
 app.listen(PORT, () => {
-    console.log(`Doğrudan Bağlantılı Sunucu Aktif! Port: ${PORT}`);
+    console.log(`Native Fetch Sunucu Aktif! Port: ${PORT}`);
 });
