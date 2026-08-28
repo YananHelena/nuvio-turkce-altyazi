@@ -10,9 +10,9 @@ const PORT = process.env.PORT || 10000;
 
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
-    version: "1.1.3", // NİHAİ ÇÖZÜM
-    name: "Türkçe Altyazı (Pro Master)",
-    description: "Nuvio için TurkceAltyazi.org sitesinden en kararlı yöntemle altyazı çeker.",
+    version: "1.1.4", // Kesin Çözüm Sürümü
+    name: "Türkçe Altyazı (Pro Fix)",
+    description: "Nuvio için TurkceAltyazi.org sitesinden kararlı indirme uç noktasıyla altyazı çeker.",
     resources: ["subtitles"],
     types: ["movie", "series"],
     idPrefixes: ["tt"],
@@ -80,7 +80,7 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     return subtitles;
 }
 
-// PROXY İNDİRİCİ: Zaman aşımını (499) önlemek için süreyi uzatıyor ve doğrudan indirme uç noktasını kullanıyoruz
+// PROXY İNDİRİCİ: Kesinleşmiş ind.php adresi ve çerez yönetimi
 app.get('/download/:subId.srt', async (req, res) => {
     const subId = req.params.subId;
     console.log(`\n>>> Nuvio Altyazı İndiriyor (ID: ${subId})...`);
@@ -97,33 +97,28 @@ app.get('/download/:subId.srt', async (req, res) => {
         const cookieString = cookies.map(c => c.split(';')[0]).join('; ');
 
         const $ = cheerio.load(detailRes.data);
-        
-        // Sayfadaki gerçek form action adresini veya indirme butonunu buluyoruz
-        let formAction = "https://www.turkcealtyazi.org/ind.php";
         const form = $("form:has(input[name='idid'])").first();
         
         const inputs = {};
         if (form.length > 0) {
-            const actionAttr = form.attr("action");
-            if (actionAttr) {
-                formAction = actionAttr.startsWith("http") ? actionAttr : `https://www.turkcealtyazi.org${actionAttr}`;
-            }
             form.find("input").each((i, el) => {
                 const name = $(el).attr("name");
                 if (name) inputs[name] = $(el).attr("value") || "";
             });
         } else {
-            // Yedek plan: Doğrudan standart parametreler
             inputs.idid = subId;
         }
 
         const postData = new URLSearchParams(inputs).toString();
+        
+        // HATA DÜZELTMESİ: URL artık kesilme ihtimali olmayan sabit ve doğru adres!
+        const formAction = "https://www.turkcealtyazi.org/ind.php";
+        
         console.log(`2. AŞAMA: Hedef URL: ${formAction} | Veri: ${postData}`);
-        console.log("3. AŞAMA: ZIP dosyası indiriliyor (Timeout 90 saniye)...");
+        console.log("3. AŞAMA: ZIP dosyası indiriliyor...");
 
         const scraperDownloadUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&keep_headers=true&url=${encodeURIComponent(formAction)}`;
 
-        // Zaman aşımını 90 saniyeye çıkararak 499 hatasını tamamen ortadan kaldırıyoruz
         const zipRes = await axios.post(scraperDownloadUrl, postData, {
             headers: {
                 ...BROWSER_HEADERS,
@@ -176,5 +171,5 @@ const addonRouter = getRouter(addonInterface);
 app.use("/", addonRouter);
 
 app.listen(PORT, () => {
-    console.log(`Pro Master Sunucu Aktif! Port: ${PORT}`);
+    console.log(`Pro Fix Sunucu Aktif! Port: ${PORT}`);
 });
