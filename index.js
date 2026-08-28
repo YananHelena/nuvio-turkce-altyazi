@@ -3,21 +3,20 @@ require('dotenv').config({ quiet: true });
 const crypto = require('node:crypto');
 const path = require('node:path');
 const express = require('express');
-const config = require('./config');
 const landingTemplate = require('./landingTemplate');
 const manifest = require('./manifest');
 const { createDefaultSubtitleService } = require('./scraper');
 
+const PORT = process.env.PORT || 10000;
 const SEARCH_CACHE_SECONDS = 15 * 60;
 const EMPTY_CACHE_SECONDS = 2 * 60;
 const SUBTITLE_CACHE_SECONDS = 24 * 60 * 60;
 
-function requestBaseUrl(req, configuredUrl, port) {
-  if (configuredUrl) return configuredUrl;
+function requestBaseUrl(req) {
   try {
     return new URL(`${req.protocol}://${req.get('host')}`).origin;
   } catch {
-    return `http://127.0.0.1:${port}`;
+    return `http://127.0.0.1:${PORT}`;
   }
 }
 
@@ -57,13 +56,12 @@ function cacheControl({ maxAge, staleRevalidate = 4 * 60 * 60, staleError = 7 * 
 
 function createApp({
   service = createDefaultSubtitleService(),
-  appConfig = config,
   addonManifest = manifest,
   logger = console,
 } = {}) {
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', appConfig.trustProxy);
+  app.set('trust proxy', true);
 
   app.use((req, res, next) => {
     res.set({
@@ -78,12 +76,12 @@ function createApp({
   });
 
   app.get('/', (req, res) => {
-    const baseUrl = requestBaseUrl(req, appConfig.publicUrl, appConfig.port);
+    const baseUrl = requestBaseUrl(req);
     res.type('html').send(landingTemplate(addonManifest, `${baseUrl}/manifest.json`));
   });
 
   app.get(['/manifest.json', '/addon/manifest.json'], (req, res) => {
-    const baseUrl = requestBaseUrl(req, appConfig.publicUrl, appConfig.port);
+    const baseUrl = requestBaseUrl(req);
     res.set('Cache-Control', cacheControl({ maxAge: 60 * 60 }));
     res.json(publicManifest(addonManifest, baseUrl));
   });
@@ -98,7 +96,7 @@ function createApp({
 
     try {
       const results = await service.findSubtitles(media);
-      const baseUrl = requestBaseUrl(req, appConfig.publicUrl, appConfig.port);
+      const baseUrl = requestBaseUrl(req);
       const subtitles = results.map((subtitle) => ({
         id: subtitle.id,
         lang: subtitle.lang,
@@ -136,8 +134,8 @@ function createApp({
 }
 
 if (require.main === module) {
-  createApp().listen(config.port, () => {
-    console.log(`Addon listening on port ${config.port}`);
+  createApp().listen(PORT, () => {
+    console.log(`Addon listening on port ${PORT}`);
   });
 }
 
