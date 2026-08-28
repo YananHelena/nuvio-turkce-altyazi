@@ -10,7 +10,7 @@ const manifest = {
     description: "Nuvio için TurkceAltyazi.org sitesinden otomatik Türkçe altyazı çeker.",
     resources: ["subtitles"],
     types: ["movie", "series"],
-    idPrefixes: ["tt"]
+    idPrefixes: ["tt"],
     catalogs: []
 };
 
