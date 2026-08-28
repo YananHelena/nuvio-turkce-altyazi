@@ -1,0 +1,1 @@
+turkcealtyazi.org dan altyazıları alarak uygulamalar da kullanmak için. Hiçbir şekilde turkcealtyazi.org veya kullanılacak uygulamalar ile ilişiğim yoktur. Hak talebim yoktur. Sadece kullanıyorum kullanıcı olarak.
