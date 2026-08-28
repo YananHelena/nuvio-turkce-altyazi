@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 10000;
 
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
-    version: "1.0.6", // Önbelleği kırmak için güncelledik
+    version: "1.0.7", // Önbelleği kırmak için güncelledik
     name: "Türkçe Altyazı (TurkceAltyazi.org)",
     description: "Nuvio için TurkceAltyazi.org sitesinden otomatik Türkçe altyazı çeker ve çıkarır.",
     resources: ["subtitles"],
@@ -77,17 +77,16 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     return subtitles;
 }
 
-// 2. AŞAMA: PROXY İNDİRİCİ (Kusursuz POST ve Dosya Dedektifi)
+// 2. AŞAMA: PROXY İNDİRİCİ (Hata Düzeltildi)
 app.get('/download/:subId.srt', async (req, res) => {
     const subId = req.params.subId;
     console.log(`\n>>> Nuvio Altyazı İndiriyor (ID: ${subId})...`);
 
     try {
-        // HATA DÜZELTMESİ 1: URL sadece ind.php olmalı
         const targetDownloadUrl = `https://www.turkcealtyazi.org/ind.php`;
         
-        // HATA DÜZELTMESİ 2: keep_headers=true kaldırıldı! Sadece binary_target kaldı.
-        const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(targetDownloadUrl)}&binary_target=true`;
+        // HATA DÜZELTMESİ: ScraperAPI'nin tanımadığı sahte komutu kaldırdık!
+        const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(targetDownloadUrl)}`;
         
         const postData = `idid=${subId}`;
 
@@ -101,7 +100,7 @@ app.get('/download/:subId.srt', async (req, res) => {
             timeout: 60000 
         });
         
-        // DOSYA DEDEKTİFİ: İndirilen verinin ne olduğunu kontrol edelim
+        // DOSYA DEDEKTİFİ
         const buffer = Buffer.from(response.data);
         const headerText = buffer.toString('utf8', 0, 4);
 
@@ -109,9 +108,9 @@ app.get('/download/:subId.srt', async (req, res) => {
             console.error(">>> DEDEKTİF RAPORU: Bu bir RAR dosyası! (Şu an kodumuz sadece ZIP açabiliyor)");
             return res.status(400).send("RAR dosya formati desteklenmiyor.");
         } else if (!headerText.startsWith('PK')) {
-            // ZIP dosyaları her zaman "PK" harfleriyle başlar. Başlamıyorsa sitenin HTML'ini (Cloudflare sayfasını) indirmişiz demektir.
             console.error(">>> DEDEKTİF RAPORU: Bu bir ZIP dosyası değil! Site muhtemelen HTML veya Hata sayfası gönderdi.");
-            // console.log("Gelen İçerik (İlk 100 Karakter):", buffer.toString('utf8', 0, 100));
+            // Ne gönderdiğini görmek istersek diye logluyoruz:
+            // console.log("Gelen İçerik:", buffer.toString('utf8', 0, 150));
             return res.status(500).send("Geçersiz dosya formatı.");
         }
 
