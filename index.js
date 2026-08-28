@@ -10,9 +10,9 @@ const PORT = process.env.PORT || 10000;
 
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
-    version: "1.1.5", // Kusursuz Referer Sürümü
-    name: "Türkçe Altyazı (Master)",
-    description: "Nuvio için TurkceAltyazi.org sitesinden tam referer ve çerez desteğiyle altyazı çeker.",
+    version: "1.1.6", // Son Direniş Sürümü
+    name: "Türkçe Altyazı (Custom)",
+    description: "Nuvio için TurkceAltyazi.org altyazı eklentisi.",
     resources: ["subtitles"],
     types: ["movie", "series"],
     idPrefixes: ["tt"],
@@ -22,7 +22,6 @@ const manifest = {
 const builder = new addonBuilder(manifest);
 const app = express(); 
 
-// Bellekte geçici olarak sayfa linklerini tutacağımız akıllı sözlük (Cache Map)
 const subPageCache = new Map();
 
 const BROWSER_HEADERS = {
@@ -61,8 +60,6 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
             const match = titleLink.match(/\/sub\/(\d+)\//);
             if (match) {
                 const subId = match[1];
-                
-                // Kritik İyileştirme: Sitenin bize verdiği orijinal sayfa adresini hafızaya kaydediyoruz!
                 const fullPageUrl = titleLink.startsWith("http") ? titleLink : `https://www.turkcealtyazi.org${titleLink.startsWith("/") ? "" : "/"}${titleLink}`;
                 subPageCache.set(subId, fullPageUrl);
 
@@ -88,21 +85,20 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     return subtitles;
 }
 
-// PROXY İNDİRİCİ: Tam Referer Eşleşmeli İndirme Motoru
+// PROXY İNDİRİCİ: Çerezleri ve Formu Doğrudan Birleştiren Motor
 app.get('/download/:subId.srt', async (req, res) => {
     const subId = req.params.subId;
     console.log(`\n>>> Nuvio Altyazı İndiriyor (ID: ${subId})...`);
 
     try {
-        const sessionNum = Math.floor(Math.random() * 100000); 
-        
-        // Hafızadan gerçek altyazı sayfa adresini alıyoruz, yoksa yedek oluşturuyoruz
         const detailUrl = subPageCache.get(subId) || `https://www.turkcealtyazi.org/sub/${subId}/altyazi.html`;
         
-        console.log(`1. AŞAMA: Gerçek sayfa ziyaret ediliyor -> ${detailUrl} (Session: ${sessionNum})`);
-        const scraperDetailUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&keep_headers=true&url=${encodeURIComponent(detailUrl)}`;
+        console.log(`1. AŞAMA: Sayfa ziyaret ediliyor -> ${detailUrl}`);
         
+        // ScraperAPI üzerinden GET isteği atıp hem HTML'i hem çerezleri yakalıyoruz
+        const scraperDetailUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&render=false&url=${encodeURIComponent(detailUrl)}`;
         const detailRes = await axios.get(scraperDetailUrl, { headers: BROWSER_HEADERS, timeout: 60000 });
+        
         const cookies = detailRes.headers['set-cookie'] || [];
         const cookieString = cookies.map(c => c.split(';')[0]).join('; ');
 
@@ -122,15 +118,16 @@ app.get('/download/:subId.srt', async (req, res) => {
         const postData = new URLSearchParams(inputs).toString();
         const formAction = "https://www.turkcealtyazi.org/ind.php";
         
-        console.log(`2. AŞAMA: Form şifreleri toplandı. ZIP indiriliyor...`);
+        console.log(`2. AŞAMA: Form verileri hazır. ZIP indiriliyor...`);
 
-        const scraperDownloadUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&keep_headers=true&url=${encodeURIComponent(formAction)}`;
+        // İndirme aşamasında ScraperAPI'nin URL parametresi yerine body (POST) üzerinden gitmesini sağlıyoruz
+        const scraperDownloadUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(formAction)}`;
 
         const zipRes = await axios.post(scraperDownloadUrl, postData, {
             headers: {
                 ...BROWSER_HEADERS,
                 'Content-Type': 'application/x-www-form-urlencoded',
-                'Referer': detailUrl, // İŞTE 404'Ü ENGELLEYEN TAM EŞLEŞMELİ REFERER!
+                'Referer': detailUrl,
                 'Cookie': cookieString
             },
             responseType: 'arraybuffer',
@@ -178,5 +175,5 @@ const addonRouter = getRouter(addonInterface);
 app.use("/", addonRouter);
 
 app.listen(PORT, () => {
-    console.log(`Master Sunucu Aktif! Port: ${PORT}`);
+    console.log(`Custom Sunucu Aktif! Port: ${PORT}`);
 });
