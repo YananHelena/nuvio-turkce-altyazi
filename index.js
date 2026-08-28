@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 10000;
 
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
-    version: "1.0.2",
+    version: "1.0.3", // Önbelleği kırmak için sürümü yükselttik
     name: "Türkçe Altyazı (TurkceAltyazi.org)",
     description: "Nuvio için TurkceAltyazi.org sitesinden otomatik Türkçe altyazı çeker ve çıkarır.",
     resources: ["subtitles"],
@@ -20,9 +20,8 @@ const manifest = {
 };
 
 const builder = new addonBuilder(manifest);
-const app = express(); // Express sunucusunu başlatıyoruz
+const app = express(); 
 
-// 1. AŞAMA: Nuvio altyazı listesi istediğinde çalışır
 builder.defineSubtitlesHandler(async (args) => {
     const { id } = args; 
     const imdbId = id.split(":")[0];
@@ -56,8 +55,6 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
             const match = titleLink.match(/\/sub\/(\d+)\//);
             if (match) {
                 const subId = match[1];
-                
-                // DİKKAT: Nuvio'ya doğrudan kendi Render sunucumuzun indirme adresini veriyoruz!
                 const renderUrl = "https://nuvio-turkce-altyazi.onrender.com";
                 const proxyUrl = `${renderUrl}/download/${subId}.srt`;
                 
@@ -80,32 +77,36 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     return subtitles;
 }
 
-// 2. AŞAMA: Nuvio, listeden bir altyazıya tıkladığında çalışır (PROXY / ZİP ÇIKARTMA İŞLEMİ)
+// 2. AŞAMA: PROXY İNDİRİCİ (POST İŞLEMİ)
 app.get('/download/:subId.srt', async (req, res) => {
     const subId = req.params.subId;
     console.log(`\n>>> Nuvio Altyazı İndiriyor (ID: ${subId})...`);
 
     try {
-        const downloadUrl = encodeURIComponent(`https://www.turkcealtyazi.org/ind.php?id=${subId}`);
+        const downloadUrl = encodeURIComponent(`https://www.turkcealtyazi.org/ind.php`);
         const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${downloadUrl}`;
 
-        console.log("ScraperAPI üzerinden ZIP dosyası indiriliyor...");
+        console.log("ScraperAPI üzerinden form (POST) gönderilerek ZIP dosyası indiriliyor...");
         
-        // Zip dosyasını tampon bellek (buffer) olarak indiriyoruz
-        const response = await axios.get(scraperUrl, { responseType: 'arraybuffer', timeout: 60000 });
+        // Sitenin beklediği gizli form verisini hazırlıyoruz
+        const postData = `idid=${subId}`;
+
+        // GET yerine POST isteği atıyoruz
+        const response = await axios.post(scraperUrl, postData, {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            responseType: 'arraybuffer', 
+            timeout: 60000 
+        });
         
-        // İndirilen veriyi ZIP olarak açmaya çalışıyoruz
         const zip = new AdmZip(response.data);
         const zipEntries = zip.getEntries();
         
-        // İçindeki .srt dosyasını buluyoruz
         let srtEntry = zipEntries.find(entry => entry.entryName.toLowerCase().endsWith('.srt'));
 
         if (srtEntry) {
             console.log(`ZIP içinden SRT bulundu: ${srtEntry.entryName}`);
             let srtData = srtEntry.getData();
             
-            // Türkçe karakter bozulmasını engellemek için dosyayı ANSI(win1254)'ten UTF-8'e dönüştürüyoruz
             const utf8Srt = iconv.decode(srtData, 'win1254');
 
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -122,12 +123,10 @@ app.get('/download/:subId.srt', async (req, res) => {
     }
 });
 
-// 3. AŞAMA: SDK'nın kendi Express yönlendiricisini oluşturup uygulamaya bağlıyoruz (HATAYI ÇÖZEN KISIM)
 const addonInterface = builder.getInterface();
 const addonRouter = getRouter(addonInterface);
 app.use("/", addonRouter);
 
-// Sunucuyu başlatıyoruz
 app.listen(PORT, () => {
     console.log(`Gelişmiş Proxy Sunucu Aktif! Port: ${PORT}`);
 });
