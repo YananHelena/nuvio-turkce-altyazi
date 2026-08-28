@@ -2,10 +2,8 @@ const { addonBuilder, serveHTTP } = require("stremio-addon-sdk");
 const axios = require("axios");
 const cheerio = require("cheerio");
 
-// === BURAYA KENDİ API ANAHTARINI YAPIŞTIR ===
-const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY;
+const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY; 
 
-// Manifest (Nuvio'nun okuduğu eklenti kimlik kartı)
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
     version: "1.0.0",
@@ -20,16 +18,15 @@ const manifest = {
 const builder = new addonBuilder(manifest);
 
 builder.defineSubtitlesHandler(async (args) => {
-    const { type, id } = args; 
+    const { id } = args; 
     const parts = id.split(":");
     const imdbId = parts[0];
-    const season = parts[1] ? parseInt(parts[1], 10) : null;
-    const episode = parts[2] ? parseInt(parts[2], 10) : null;
 
-    console.log(`[İstek] ${imdbId}`);
+    console.log(`\n--- YENİ İSTEK GELDİ: ${imdbId} ---`);
 
     try {
-        const subtitles = await getSubtitlesFromTurkceAltyazi(imdbId, season, episode);
+        const subtitles = await getSubtitlesFromTurkceAltyazi(imdbId);
+        console.log(`Bulunan Altyazı Sayısı: ${subtitles.length}`);
         return { subtitles };
     } catch (err) {
         console.error("Hata:", err.message);
@@ -37,49 +34,38 @@ builder.defineSubtitlesHandler(async (args) => {
     }
 });
 
-async function getSubtitlesFromTurkceAltyazi(imdbId, season, episode) {
+async function getSubtitlesFromTurkceAltyazi(imdbId) {
     const subtitles = [];
     const targetUrl = encodeURIComponent(`https://www.turkcealtyazi.org/find.php?cat=sub&find=${imdbId}`);
-    
-    // ScraperAPI üzerinden Cloudflare'i aşarak istek atıyoruz (render=true diyerek JS'nin çalışmasını bekliyoruz)
-    // render=true kısmını sildik, sadece API ile bağlanıyoruz
     const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${targetUrl}`;
     
-    console.log("ScraperAPI üzerinden siteye bağlanılıyor...");
+    console.log("ScraperAPI'ye istek atılıyor...");
     
-    // Süreyi 20 saniyeden 60 saniyeye çıkardık
-    const response = await axios.get(scraperUrl, { timeout: 60000 });
+    const response = await axios.get(scraperUrl, { timeout: 60000 }); 
     const $ = cheerio.load(response.data);
+    
+    // İŞTE AJAN KODUMUZ: Sayfanın başlığını (Title) loga yazdıracak
+    const sayfaBasligi = $('title').text().trim();
+    console.log(">>> GELEN SAYFANIN BAŞLIĞI:", sayfaBasligi);
+
     const results = [];
 
-    // Arama sonuçlarını ayıklama
-    $(".search-results tr, .al-table tr, div.al-row").each((i, el) => {
+    // Hem arama hem de direkt film sayfası için daha geniş seçiciler ekledik
+    $(".search-results tr, .al-table tr, div.al-row, div.altyazi-list-wrapper div.row").each((i, el) => {
         const titleLink = $(el).find("a[href*='/sub/']").attr("href");
-        const titleText = $(el).text().trim();
-
         if (titleLink) {
             results.push({
                 url: titleLink.startsWith("http") ? titleLink : `https://www.turkcealtyazi.org${titleLink}`,
-                info: titleText
             });
         }
     });
 
-    for (let i = 0; i < Math.min(results.length, 5); i++) {
-        const res = results[i];
-        
-        if (season && episode) {
-            const seasonEpRegex = new RegExp(`S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`, 'i');
-            const simpleRegex = new RegExp(`${season}x${episode}`, 'i');
-            
-            if (!seasonEpRegex.test(res.info) && !simpleRegex.test(res.info) && !res.info.includes(`${season}. Sezon`)) {
-                continue;
-            }
-        }
+    console.log(">>> HTML'den Çıkarılan Link Sayısı:", results.length);
 
+    for (let i = 0; i < Math.min(results.length, 5); i++) {
         subtitles.push({
             id: `ta_${imdbId}_${i}`,
-            url: res.url,
+            url: results[i].url,
             lang: "tur",
             label: `[TR] TurkceAltyazi.org - Seçenek ${i + 1}`
         });
@@ -88,6 +74,5 @@ async function getSubtitlesFromTurkceAltyazi(imdbId, season, episode) {
     return subtitles;
 }
 
-const PORT = process.env.PORT || 7000;
+const PORT = process.env.PORT || 10000;
 serveHTTP(builder.getInterface(), { port: PORT });
-console.log(`Sunucu aktif! Port: ${PORT}`);
