@@ -10,8 +10,8 @@ const PORT = process.env.PORT || 10000;
 
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
-    version: "1.1.6", // Son Direniş Sürümü
-    name: "Türkçe Altyazı (Custom)",
+    version: "1.1.7", // Sabit Oturum ve Çerez Taşıyıcı
+    name: "Türkçe Altyazı (Custom v2)",
     description: "Nuvio için TurkceAltyazi.org altyazı eklentisi.",
     resources: ["subtitles"],
     types: ["movie", "series"],
@@ -85,20 +85,23 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     return subtitles;
 }
 
-// PROXY İNDİRİCİ: Çerezleri ve Formu Doğrudan Birleştiren Motor
+// PROXY İNDİRİCİ: Sabit Oturum (Session) ve Çerez Köprüsü
 app.get('/download/:subId.srt', async (req, res) => {
     const subId = req.params.subId;
     console.log(`\n>>> Nuvio Altyazı İndiriyor (ID: ${subId})...`);
 
     try {
         const detailUrl = subPageCache.get(subId) || `https://www.turkcealtyazi.org/sub/${subId}/altyazi.html`;
+        // Aynı IP havuzunda kalmak için sabit bir oturum numarası üretiyoruz
+        const sessionNum = Math.floor(Math.random() * 900000) + 100000;
         
-        console.log(`1. AŞAMA: Sayfa ziyaret ediliyor -> ${detailUrl}`);
+        console.log(`1. AŞAMA: Sayfa ziyaret ediliyor -> ${detailUrl} (Session: ${sessionNum})`);
         
-        // ScraperAPI üzerinden GET isteği atıp hem HTML'i hem çerezleri yakalıyoruz
-        const scraperDetailUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&render=false&url=${encodeURIComponent(detailUrl)}`;
+        // ScraperAPI'ye session_number ekleyerek ilk bağlantıyı kuruyoruz
+        const scraperDetailUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&keep_headers=true&url=${encodeURIComponent(detailUrl)}`;
         const detailRes = await axios.get(scraperDetailUrl, { headers: BROWSER_HEADERS, timeout: 60000 });
         
+        // Sitenin verdiği çerezleri yakalıyoruz
         const cookies = detailRes.headers['set-cookie'] || [];
         const cookieString = cookies.map(c => c.split(';')[0]).join('; ');
 
@@ -118,17 +121,17 @@ app.get('/download/:subId.srt', async (req, res) => {
         const postData = new URLSearchParams(inputs).toString();
         const formAction = "https://www.turkcealtyazi.org/ind.php";
         
-        console.log(`2. AŞAMA: Form verileri hazır. ZIP indiriliyor...`);
+        console.log(`2. AŞAMA: Form verileri ve Çerezler hazır. ZIP indiriliyor...`);
 
-        // İndirme aşamasında ScraperAPI'nin URL parametresi yerine body (POST) üzerinden gitmesini sağlıyoruz
-        const scraperDownloadUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(formAction)}`;
+        // İkinci aşamada BİREBİR AYNI session_number ve yakaladığımız Cookie string'ini kullanıyoruz!
+        const scraperDownloadUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&keep_headers=true&url=${encodeURIComponent(formAction)}`;
 
         const zipRes = await axios.post(scraperDownloadUrl, postData, {
             headers: {
                 ...BROWSER_HEADERS,
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'Referer': detailUrl,
-                'Cookie': cookieString
+                'Cookie': cookieString // Çerezleri buraya doğrudan enjekte ediyoruz
             },
             responseType: 'arraybuffer',
             timeout: 90000 
@@ -175,5 +178,5 @@ const addonRouter = getRouter(addonInterface);
 app.use("/", addonRouter);
 
 app.listen(PORT, () => {
-    console.log(`Custom Sunucu Aktif! Port: ${PORT}`);
+    console.log(`Custom v2 Sunucu Aktif! Port: ${PORT}`);
 });
