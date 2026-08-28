@@ -1,4 +1,4 @@
-const { addonBuilder, serveHTTP } = require("stremio-addon-sdk");
+const { addonBuilder, getRouter } = require("stremio-addon-sdk");
 const axios = require("axios");
 const cheerio = require("cheerio");
 const AdmZip = require("adm-zip");
@@ -20,7 +20,7 @@ const manifest = {
 };
 
 const builder = new addonBuilder(manifest);
-const app = express(); // Express sunucusunu dosya indirme (proxy) rotaları için başlatıyoruz
+const app = express(); // Express sunucusunu başlatıyoruz
 
 // 1. AŞAMA: Nuvio altyazı listesi istediğinde çalışır
 builder.defineSubtitlesHandler(async (args) => {
@@ -44,7 +44,7 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     const targetUrl = encodeURIComponent(`https://www.turkcealtyazi.org/find.php?cat=sub&find=${imdbId}`);
     const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${targetUrl}`;
     
-    console.log("ScraperAPI'ye istek atılıyor...");
+    console.log("ScraperAPI'ye liste için istek atılıyor...");
     
     const response = await axios.get(scraperUrl, { timeout: 60000 }); 
     const $ = cheerio.load(response.data);
@@ -56,9 +56,9 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
             const match = titleLink.match(/\/sub\/(\d+)\//);
             if (match) {
                 const subId = match[1];
-                // DİKKAT: Artık doğrudan sitenin linkini değil, BİZİM sunucumuzun indirme rotasını veriyoruz!
-                // Örn: https://nuvio-turkce-altyazi.onrender.com/download/478159.srt
-                const renderUrl = process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${PORT}`;
+                
+                // DİKKAT: Nuvio'ya doğrudan kendi Render sunucumuzun indirme adresini veriyoruz!
+                const renderUrl = "https://nuvio-turkce-altyazi.onrender.com";
                 const proxyUrl = `${renderUrl}/download/${subId}.srt`;
                 
                 if (!results.some(r => r.url === proxyUrl)) {
@@ -80,7 +80,7 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     return subtitles;
 }
 
-// 2. AŞAMA: Nuvio, listeden bir altyazıya tıkladığında çalışır (PROXY İŞLEMİ)
+// 2. AŞAMA: Nuvio, listeden bir altyazıya tıkladığında çalışır (PROXY / ZİP ÇIKARTMA İŞLEMİ)
 app.get('/download/:subId.srt', async (req, res) => {
     const subId = req.params.subId;
     console.log(`\n>>> Nuvio Altyazı İndiriyor (ID: ${subId})...`);
@@ -89,6 +89,8 @@ app.get('/download/:subId.srt', async (req, res) => {
         const downloadUrl = encodeURIComponent(`https://www.turkcealtyazi.org/ind.php?id=${subId}`);
         const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${downloadUrl}`;
 
+        console.log("ScraperAPI üzerinden ZIP dosyası indiriliyor...");
+        
         // Zip dosyasını tampon bellek (buffer) olarak indiriyoruz
         const response = await axios.get(scraperUrl, { responseType: 'arraybuffer', timeout: 60000 });
         
@@ -103,8 +105,8 @@ app.get('/download/:subId.srt', async (req, res) => {
             console.log(`ZIP içinden SRT bulundu: ${srtEntry.entryName}`);
             let srtData = srtEntry.getData();
             
-            // Türkçe karakter bozulmasını engellemek için dosyayı UTF-8 formatına dönüştürüyoruz
-            const utf8Srt = iconv.decode(srtData, 'win1254'); // Türkiye'deki altyazılar genelde ANSI (win1254) kaydedilir
+            // Türkçe karakter bozulmasını engellemek için dosyayı ANSI(win1254)'ten UTF-8'e dönüştürüyoruz
+            const utf8Srt = iconv.decode(srtData, 'win1254');
 
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Content-Disposition', `attachment; filename="${subId}.srt"`);
@@ -120,15 +122,10 @@ app.get('/download/:subId.srt', async (req, res) => {
     }
 });
 
-// Stremio Addon Rotalarını Express Sunucumuza bağlıyoruz
+// 3. AŞAMA: SDK'nın kendi Express yönlendiricisini oluşturup uygulamaya bağlıyoruz (HATAYI ÇÖZEN KISIM)
 const addonInterface = builder.getInterface();
-app.get('/manifest.json', (req, res) => res.json(addonInterface.manifest));
-app.get('/catalog/:type/:id.json', (req, res) => res.json({ metas: [] }));
-app.get('/subtitles/:type/:id/:extra?.json', async (req, res) => {
-    const args = { type: req.params.type, id: req.params.id };
-    const response = await builder.getInterface().resourceHandlers.subtitles(args);
-    res.json(response);
-});
+const addonRouter = getRouter(addonInterface);
+app.use("/", addonRouter);
 
 // Sunucuyu başlatıyoruz
 app.listen(PORT, () => {
