@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 10000;
 
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
-    version: "1.0.8", // Önbelleği kırmak için
+    version: "1.0.9", // Önbelleği kırmak için
     name: "Türkçe Altyazı (TurkceAltyazi.org)",
     description: "Nuvio için TurkceAltyazi.org sitesinden otomatik Türkçe altyazı çeker ve çıkarır.",
     resources: ["subtitles"],
@@ -53,16 +53,16 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     $("a").each((i, el) => {
         const titleLink = $(el).attr("href");
         if (titleLink && titleLink.includes("/sub/") && titleLink.includes(".html")) {
-            
-            // YENİ TAKTİK: Nuvio'ya sadece ID'yi değil, sayfanın TAM LİNKİNİ şifreleyerek veriyoruz.
-            const fullUrl = titleLink.startsWith("http") ? titleLink : `https://www.turkcealtyazi.org${titleLink.startsWith("/") ? "" : "/"}${titleLink}`;
-            const encodedUrl = Buffer.from(fullUrl).toString('base64url'); // Linki güvenli hale getiriyoruz
-            
-            const renderUrl = "https://nuvio-turkce-altyazi.onrender.com";
-            const proxyUrl = `${renderUrl}/download/${encodedUrl}.srt`;
-            
-            if (!results.some(r => r.url === proxyUrl)) {
-                results.push({ url: proxyUrl });
+            const match = titleLink.match(/\/sub\/(\d+)\//);
+            if (match) {
+                const subId = match[1];
+                const renderUrl = "https://nuvio-turkce-altyazi.onrender.com";
+                // Şifreli linkten vazgeçtik, tekrar temiz ID'li linke döndük
+                const proxyUrl = `${renderUrl}/download/${subId}.srt`;
+                
+                if (!results.some(r => r.url === proxyUrl)) {
+                    results.push({ url: proxyUrl });
+                }
             }
         }
     });
@@ -79,36 +79,28 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     return subtitles;
 }
 
-// 2. AŞAMA: PROXY İNDİRİCİ (TAM İNSAN SİMÜLASYONU)
-app.get('/download/:encodedUrl.srt', async (req, res) => {
-    try {
-        // Nuvio'nun gönderdiği şifreli linki çözüyoruz
-        const encodedUrl = req.params.encodedUrl;
-        const decodedUrl = Buffer.from(encodedUrl, 'base64url').toString('utf8');
-        
-        // Site bizi robot sanmasın diye tüm işlemleri AYNI oturum (IP) üzerinden yapacağız
-        const sessionNum = Math.floor(Math.random() * 1000000); 
+// 2. AŞAMA: PROXY İNDİRİCİ (TAM İNSAN SİMÜLASYONU - HATASIZ)
+app.get('/download/:subId.srt', async (req, res) => {
+    const subId = req.params.subId;
+    console.log(`\n>>> Nuvio Altyazı İndiriyor (ID: ${subId})...`);
 
-        console.log(`\n>>> 1. AŞAMA: Altyazı detay sayfası ziyaret ediliyor: ${decodedUrl}`);
+    try {
+        const sessionNum = Math.floor(Math.random() * 1000000); 
+        // ID'yi kullanarak sahte bir detay sayfası linki oluşturuyoruz (Site için bu yeterli)
+        const detailUrl = `https://www.turkcealtyazi.org/sub/${subId}/altyazi.html`;
         
-        const scraperDetailUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&url=${encodeURIComponent(decodedUrl)}`;
+        console.log(`>>> 1. AŞAMA: Oturum açılıyor (Session: ${sessionNum})`);
+        
+        const scraperDetailUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&url=${encodeURIComponent(detailUrl)}`;
         const detailResponse = await axios.get(scraperDetailUrl, { timeout: 60000 });
         const $ = cheerio.load(detailResponse.data);
 
-        // Sayfadaki formlardan "ind.php" veya "download" içeren "İndir" butonunun formunu bul
-        const form = $("form").filter((i, el) => {
-            const action = $(el).attr("action") || "";
-            return action.includes("ind.php") || action.includes("download");
-        }).first();
+        // MUHTEŞEM ÇÖZÜM: Find.php karışıklığını önlemek için, SADECE içinde "idid" olan formu bul!
+        const form = $("form:has(input[name='idid'])").first();
 
-        let finalDownloadUrl = "";
-        let finalPostData = "";
+        let finalPostData = `idid=${subId}`; // Her ihtimale karşı varsayılan yedek
 
         if (form.length > 0) {
-            const action = form.attr("action");
-            finalDownloadUrl = action.startsWith("http") ? action : `https://www.turkcealtyazi.org${action.startsWith("/") ? "" : "/"}${action}`;
-            
-            // Formun içindeki gizli şifreleri (tokenleri) ve ID'leri topluyoruz
             const inputs = {};
             form.find("input").each((i, el) => {
                 const name = $(el).attr("name");
@@ -116,17 +108,15 @@ app.get('/download/:encodedUrl.srt', async (req, res) => {
                 if (name) inputs[name] = val || "";
             });
             finalPostData = qs.stringify(inputs);
-            
-            console.log(`>>> 2. AŞAMA: İndir butonu ve gizli şifreler yakalandı! Veri: ${finalPostData}`);
+            console.log(`>>> 2. AŞAMA: Gerçek indirme formu bulundu! Veri: ${finalPostData}`);
         } else {
-            console.error(">>> DEDEKTİF: İndirme formu bulunamadı. Sitenin tasarımı değişmiş.");
-            return res.status(404).send("İndirme linki bulunamadı.");
+            console.log(">>> 2. AŞAMA: Form bulunamadı, varsayılan ID ile zorlanıyor...");
         }
 
         console.log(">>> 3. AŞAMA: Aynı oturum ile ZIP dosyası çekiliyor...");
         
-        // Aynı session_number ile form verilerini (POST) siteye gönderiyoruz
-        const scraperDownloadUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&url=${encodeURIComponent(finalDownloadUrl)}`;
+        const targetDownloadUrl = `https://www.turkcealtyazi.org/ind.php`;
+        const scraperDownloadUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&url=${encodeURIComponent(targetDownloadUrl)}`;
         
         const zipResponse = await axios.post(scraperDownloadUrl, finalPostData, {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -160,7 +150,7 @@ app.get('/download/:encodedUrl.srt', async (req, res) => {
             const utf8Srt = iconv.decode(srtData, 'win1254');
 
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-            res.setHeader('Content-Disposition', `attachment; filename="altyazi.srt"`);
+            res.setHeader('Content-Disposition', `attachment; filename="${subId}.srt"`);
             res.send(utf8Srt);
             console.log("Altyazı başarıyla Nuvio'ya gönderildi! 🚀");
         } else {
