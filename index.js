@@ -4,13 +4,14 @@ const cheerio = require("cheerio");
 const AdmZip = require("adm-zip");
 const iconv = require("iconv-lite");
 const express = require("express");
+const qs = require('querystring');
 
 const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY; 
 const PORT = process.env.PORT || 10000;
 
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
-    version: "1.0.3", // Önbelleği kırmak için sürümü yükselttik
+    version: "1.0.4", // Önbelleği kırmak için
     name: "Türkçe Altyazı (TurkceAltyazi.org)",
     description: "Nuvio için TurkceAltyazi.org sitesinden otomatik Türkçe altyazı çeker ve çıkarır.",
     resources: ["subtitles"],
@@ -59,7 +60,10 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
                 const proxyUrl = `${renderUrl}/download/${subId}.srt`;
                 
                 if (!results.some(r => r.url === proxyUrl)) {
-                    results.push({ url: proxyUrl });
+                    results.push({ 
+                        url: proxyUrl,
+                        originalUrl: titleLink // Orijinal linki (Referer için) saklıyoruz (Nuvio görmeyecek)
+                    });
                 }
             }
         }
@@ -77,25 +81,31 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     return subtitles;
 }
 
-// 2. AŞAMA: PROXY İNDİRİCİ (POST İŞLEMİ)
+// 2. AŞAMA: PROXY İNDİRİCİ (SAHTE REFERER + POST İŞLEMİ)
 app.get('/download/:subId.srt', async (req, res) => {
     const subId = req.params.subId;
     console.log(`\n>>> Nuvio Altyazı İndiriyor (ID: ${subId})...`);
 
     try {
-        const downloadUrl = encodeURIComponent(`https://www.turkcealtyazi.org/ind.php`);
-        const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${downloadUrl}`;
-
-        console.log("ScraperAPI üzerinden form (POST) gönderilerek ZIP dosyası indiriliyor...");
+        const downloadUrl = `https://www.turkcealtyazi.org/ind.php`;
         
-        // Sitenin beklediği gizli form verisini hazırlıyoruz
-        const postData = `idid=${subId}`;
+        console.log("Siteden ZIP dosyası indirilmeye çalışılıyor (ScraperAPI olmadan doğrudan POST)...");
+        
+        // Form verisini querystring olarak hazırlıyoruz
+        const postData = qs.stringify({ idid: subId });
 
-        // GET yerine POST isteği atıyoruz
-        const response = await axios.post(scraperUrl, postData, {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        // Bu aşamada ScraperAPI KULLANMIYORUZ. Direkt kendi Render sunucumuzdan atıyoruz.
+        // Bazen dosyayı verirken Cloudflare devreye girmeyebiliyor.
+        // Sitenin beklediği Referer ve User-Agent başlıklarını ekliyoruz.
+        const response = await axios.post(downloadUrl, postData, {
+            headers: { 
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': `https://www.turkcealtyazi.org/sub/${subId}/a.html`, // Siteden geliyormuş gibi yap
+                'Origin': 'https://www.turkcealtyazi.org'
+            },
             responseType: 'arraybuffer', 
-            timeout: 60000 
+            timeout: 20000 
         });
         
         const zip = new AdmZip(response.data);
@@ -119,6 +129,11 @@ app.get('/download/:subId.srt', async (req, res) => {
         }
     } catch (error) {
         console.error("Proxy İndirme Hatası:", error.message);
+        // Eğer bu da patlarsa, büyük ihtimalle Cloudflare yine araya girdi demektir.
+        if (error.response) {
+            console.log("Hata Durum Kodu:", error.response.status);
+            // console.log("Hata Verisi (İlk 200 karakter):", error.response.data.toString().substring(0,200)); 
+        }
         res.status(500).send("Sunucu zip dosyasını indiremedi veya açamadı.");
     }
 });
