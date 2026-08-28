@@ -48,17 +48,25 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
 
     const results = [];
 
-    // YENİ TAKTİK: Sayfadaki tüm linkleri (a etiketlerini) tara
+    // YENİ TAKTİK: Sayfadaki tüm linkleri (a etiketlerini) tara ve ID'yi yakala
     $("a").each((i, el) => {
         const titleLink = $(el).attr("href");
         
-        // Eğer link varsa, "/sub/" ile başlıyor veya içeriyorsa ve ".html" ile bitiyorsa bu bir altyazı linkidir
+        // Eğer link "/sub/" içeriyorsa ve html ise
         if (titleLink && titleLink.includes("/sub/") && titleLink.includes(".html")) {
-            const fullUrl = titleLink.startsWith("http") ? titleLink : `https://www.turkcealtyazi.org${titleLink}`;
             
-            // Aynı linki mükerrer olarak listeye eklememek için kontrol
-            if (!results.some(r => r.url === fullUrl)) {
-                results.push({ url: fullUrl });
+            // Linkin içindeki ID numarasını (Örn: 478159) buluyoruz
+            const match = titleLink.match(/\/sub\/(\d+)\//);
+            
+            if (match) {
+                const subId = match[1];
+                // Nuvio'nun anlayacağı GERÇEK indirme linkini oluşturuyoruz
+                const downloadUrl = `https://www.turkcealtyazi.org/ind.php?id=${subId}`;
+                
+                // Aynı linki mükerrer olarak listeye eklememek için kontrol
+                if (!results.some(r => r.url === downloadUrl)) {
+                    results.push({ url: downloadUrl });
+                }
             }
         }
     });
