@@ -55,7 +55,7 @@ module.exports.loadConfig = loadConfig;
 
 ---
 
-### 2. `scraper.js` (Kök dizindeki dosya)
+### 2. `scraper.js`
 ```javascript
 require('dotenv').config({ quiet: true });
 
@@ -84,5 +84,3 @@ module.exports = {
   createDefaultSubtitleService,
 };
 ```[cite: 11]
-
-Bu iki dosyayı ve daha önce verdiğimiz diğer dosyaları GitHub'a eksiksiz yükleyip Render'da **"Clear build cache & deploy"** yaptığında modül bulamama hatası tamamen ortadan kalkacaktır.
