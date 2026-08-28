@@ -1,7 +1,5 @@
 require('dotenv').config({ quiet: true });
 
-const crypto = require('node:crypto');
-const path = require('node:path');
 const express = require('express');
 const landingTemplate = require('./landingTemplate');
 const manifest = require('./manifest');
@@ -86,10 +84,12 @@ function createApp({
     res.json(publicManifest(addonManifest, baseUrl));
   });
 
-  app.get(['/subtitles/:type/:imdbId.json', '/subtitles/:type/:imdbId/:query.json'], async (req, res) => {
+  // Stremio altyazı isteklerini tüm varyasyonlarıyla (ekstra query parametreleri dahil) yakala
+  app.get('/subtitles/:type/:imdbId*.json', async (req, res) => {
     let media;
     try {
-      media = parseMediaId(req.params.type, req.params.imdbId);
+      const fullId = req.params.imdbId + (req.params[0] || '');
+      media = parseMediaId(req.params.type, fullId);
     } catch (error) {
       return res.status(400).json({ subtitles: [], error: error.message });
     }
