@@ -3,7 +3,7 @@ const axios = require("axios");
 const cheerio = require("cheerio");
 
 // === BURAYA KENDİ API ANAHTARINI YAPIŞTIR ===
-const SCRAPER_API_KEY = "1ad176eeda7e8bea9fecc32f41355ed0"; 
+const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY;
 
 // Manifest (Nuvio'nun okuduğu eklenti kimlik kartı)
 const manifest = {
