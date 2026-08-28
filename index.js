@@ -2,6 +2,9 @@ const { addonBuilder, serveHTTP } = require("stremio-addon-sdk");
 const axios = require("axios");
 const cheerio = require("cheerio");
 
+// === BURAYA KENDİ API ANAHTARINI YAPIŞTIR ===
+const SCRAPER_API_KEY = "1ad176eeda7e8bea9fecc32f41355ed0"; 
+
 // Manifest (Nuvio'nun okuduğu eklenti kimlik kartı)
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
@@ -16,47 +19,38 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
-// HTTP istekleri için Standart User-Agent
-const HTTP_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
-};
-
-// Nuvio'dan gelen altyazı isteklerini karşılayan fonksiyon
 builder.defineSubtitlesHandler(async (args) => {
-    const { type, id } = args; // Örn id: "tt0111161" veya diziler için "tt0944947:1:1"
+    const { type, id } = args; 
     const parts = id.split(":");
     const imdbId = parts[0];
     const season = parts[1] ? parseInt(parts[1], 10) : null;
     const episode = parts[2] ? parseInt(parts[2], 10) : null;
 
-    console.log(`[Altyazı İsteği] Tip: ${type}, IMDB: ${imdbId}${season ? `, Sezon: ${season}, Bölüm: ${episode}` : ""}`);
+    console.log(`[İstek] ${imdbId}`);
 
     try {
         const subtitles = await getSubtitlesFromTurkceAltyazi(imdbId, season, episode);
         return { subtitles };
     } catch (err) {
-        console.error("Altyazı getirme hatası:", err.message);
+        console.error("Hata:", err.message);
         return { subtitles: [] };
     }
 });
 
-/**
- * TurkceAltyazi.org üzerinden IMDB ID ile arama yapıp altyazı bağlantılarını toplayan fonksiyon
- */
 async function getSubtitlesFromTurkceAltyazi(imdbId, season, episode) {
     const subtitles = [];
-    const searchUrl = `https://www.turkcealtyazi.org/find.php?cat=sub&find=${imdbId}`;
+    const targetUrl = encodeURIComponent(`https://www.turkcealtyazi.org/find.php?cat=sub&find=${imdbId}`);
     
-    const response = await axios.get(searchUrl, {
-        headers: HTTP_HEADERS,
-        timeout: 8000
-    });
-
+    // ScraperAPI üzerinden Cloudflare'i aşarak istek atıyoruz (render=true diyerek JS'nin çalışmasını bekliyoruz)
+    const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${targetUrl}&render=true`;
+    
+    console.log("ScraperAPI üzerinden siteye bağlanılıyor...");
+    
+    const response = await axios.get(scraperUrl, { timeout: 20000 }); // ScraperAPI biraz yavaş yanıt verebilir
     const $ = cheerio.load(response.data);
     const results = [];
 
-    // Arama sonuçları listesindeki altyazı sayfalarını topla
+    // Arama sonuçlarını ayıklama
     $(".search-results tr, .al-table tr, div.al-row").each((i, el) => {
         const titleLink = $(el).find("a[href*='/sub/']").attr("href");
         const titleText = $(el).text().trim();
@@ -69,11 +63,9 @@ async function getSubtitlesFromTurkceAltyazi(imdbId, season, episode) {
         }
     });
 
-    // İlk 5 altyazı sonucunu Nuvio formatına dönüştür
     for (let i = 0; i < Math.min(results.length, 5); i++) {
         const res = results[i];
         
-        // Eğer dizi ise sezon ve bölüm kontrolü
         if (season && episode) {
             const seasonEpRegex = new RegExp(`S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`, 'i');
             const simpleRegex = new RegExp(`${season}x${episode}`, 'i');
@@ -94,7 +86,6 @@ async function getSubtitlesFromTurkceAltyazi(imdbId, season, episode) {
     return subtitles;
 }
 
-// Sunucuyu başlat (Render PORT ortam değişkenini otomatik verir)
 const PORT = process.env.PORT || 7000;
 serveHTTP(builder.getInterface(), { port: PORT });
-console.log(`Eklenti sunucusu aktif! Port: ${PORT}`);
+console.log(`Sunucu aktif! Port: ${PORT}`);
