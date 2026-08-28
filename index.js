@@ -10,8 +10,8 @@ const PORT = process.env.PORT || 10000;
 
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
-    version: "1.1.8", // POST'suz Kesin Çözüm Sürümü
-    name: "Türkçe Altyazı (Direct)",
+    version: "1.1.9", // Nokta Atışı Link Filtreleme
+    name: "Türkçe Altyazı (Direct v2)",
     description: "Nuvio için TurkceAltyazi.org altyazı eklentisi.",
     resources: ["subtitles"],
     types: ["movie", "series"],
@@ -85,7 +85,7 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     return subtitles;
 }
 
-// PROXY İNDİRİCİ: POST belası olmadan doğrudan indirme uç noktası simülasyonu
+// PROXY İNDİRİCİ: Filtrelenmiş ve Güvenli GET İsteği
 app.get('/download/:subId.srt', async (req, res) => {
     const subId = req.params.subId;
     console.log(`\n>>> Nuvio Altyazı İndiriyor (ID: ${subId})...`);
@@ -100,21 +100,19 @@ app.get('/download/:subId.srt', async (req, res) => {
         
         const $ = cheerio.load(detailRes.data);
         
-        // Sayfadaki doğrudan .zip indirme linkini arıyoruz (Form yerine direkt a etiketlerindeki indirme bağlantısı)
         let directDownloadLink = "";
         $("a").each((i, el) => {
             const href = $(el).attr("href") || "";
-            if (href.includes("ind.php") || href.includes("download") || href.endsWith(".zip")) {
+            // KİRİTİK FİLTRE: find.php gibi tuzak linkleri ele, sadece indirme veya zip linklerini al!
+            if ((href.includes("ind.php") || href.includes("download") || href.endsWith(".zip")) && !href.includes("find.php")) {
                 directDownloadLink = href;
             }
         });
 
-        // Eğer doğrudan link bulamazsak, standart ind.php?id= formatını zorlayacağız
-        const downloadTarget = directDownloadLink ? 
-            (directDownloadLink.startsWith("http") ? directDownloadLink : `https://www.turkcealtyazi.org${directDownloadLink}`) :
-            `https://www.turkcealtyazi.org/ind.php?id=${subId}`;
+        // Kesin çözüm: Doğrudan ind.php?id= formatını kullanmak her zaman en garantisidir
+        const downloadTarget = `https://www.turkcealtyazi.org/ind.php?id=${subId}`;
 
-        console.log(`2. AŞAMA: Doğrudan indirme adresi yakalandı: ${downloadTarget}`);
+        console.log(`2. AŞAMA: Kesin indirme adresi: ${downloadTarget}`);
         console.log("3. AŞAMA: ZIP dosyası ScraperAPI üzerinden çekiliyor...");
 
         const scraperDownloadUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(downloadTarget)}`;
@@ -166,5 +164,5 @@ const addonRouter = getRouter(addonInterface);
 app.use("/", addonRouter);
 
 app.listen(PORT, () => {
-    console.log(`Direct Sunucu Aktif! Port: ${PORT}`);
+    console.log(`Direct v2 Sunucu Aktif! Port: ${PORT}`);
 });
