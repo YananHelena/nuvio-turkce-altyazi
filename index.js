@@ -4,16 +4,15 @@ const cheerio = require("cheerio");
 const AdmZip = require("adm-zip");
 const iconv = require("iconv-lite");
 const express = require("express");
-const qs = require("querystring");
 
 const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY; 
 const PORT = process.env.PORT || 10000;
 
 const manifest = {
     id: "org.turkcealtyazi.nuvio",
-    version: "1.1.2", // NİHAİ SÜRÜM - Bulut Proxy ve Çerez Yönetimi
-    name: "Türkçe Altyazı (Bulut Pro)",
-    description: "Nuvio için TurkceAltyazi.org sitesinden proxy pelerini ve çerez yönetimiyle altyazı çeker.",
+    version: "1.1.3", // NİHAİ ÇÖZÜM
+    name: "Türkçe Altyazı (Pro Master)",
+    description: "Nuvio için TurkceAltyazi.org sitesinden en kararlı yöntemle altyazı çeker.",
     resources: ["subtitles"],
     types: ["movie", "series"],
     idPrefixes: ["tt"],
@@ -43,13 +42,11 @@ builder.defineSubtitlesHandler(async (args) => {
     }
 });
 
-// 1. AŞAMA: ARAMA İŞLEMİ (ScraperAPI ile Cloudflare atlatılır)
 async function getSubtitlesFromTurkceAltyazi(imdbId) {
     const subtitles = [];
     const targetUrl = encodeURIComponent(`https://www.turkcealtyazi.org/find.php?cat=sub&find=${imdbId}`);
     
-    console.log("ScraperAPI ile arama isteği atılıyor (Render IP engeli aşılıyor)...");
-    
+    console.log("ScraperAPI ile arama yapılıyor...");
     const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${targetUrl}`;
     const response = await axios.get(scraperUrl, { timeout: 60000 }); 
     const $ = cheerio.load(response.data);
@@ -83,49 +80,50 @@ async function getSubtitlesFromTurkceAltyazi(imdbId) {
     return subtitles;
 }
 
-// 2. AŞAMA: DOSYA İNDİRME (ScraperAPI + Session + Cookie Kopyalama)
+// PROXY İNDİRİCİ: Zaman aşımını (499) önlemek için süreyi uzatıyor ve doğrudan indirme uç noktasını kullanıyoruz
 app.get('/download/:subId.srt', async (req, res) => {
     const subId = req.params.subId;
     console.log(`\n>>> Nuvio Altyazı İndiriyor (ID: ${subId})...`);
 
     try {
-        // ScraperAPI'nin aynı IP'yi kullanması için sabit bir oturum numarası belirliyoruz
         const sessionNum = Math.floor(Math.random() * 100000); 
         const detailUrl = `https://www.turkcealtyazi.org/sub/${subId}/altyazi.html`;
         
-        console.log(`1. AŞAMA: ScraperAPI ile altyazı sayfasına gidilip ÇEREZLER alınıyor (Session: ${sessionNum})...`);
-        
-        // keep_headers=true ekledik ki bizim gönderdiğimiz ve aldığımız başlıkları silmesin!
+        console.log(`1. AŞAMA: Sayfa ziyaret ediliyor (Session: ${sessionNum})...`);
         const scraperDetailUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&keep_headers=true&url=${encodeURIComponent(detailUrl)}`;
         
         const detailRes = await axios.get(scraperDetailUrl, { headers: BROWSER_HEADERS, timeout: 60000 });
-
-        // ScraperAPI üzerinden gelen Çerezleri kopyalıyoruz
         const cookies = detailRes.headers['set-cookie'] || [];
         const cookieString = cookies.map(c => c.split(';')[0]).join('; ');
 
         const $ = cheerio.load(detailRes.data);
+        
+        // Sayfadaki gerçek form action adresini veya indirme butonunu buluyoruz
+        let formAction = "https://www.turkcealtyazi.org/ind.php";
         const form = $("form:has(input[name='idid'])").first();
-
-        if (form.length === 0) {
-            console.error("Hata: İndirme formu sayfada bulunamadı.");
-            return res.status(404).send("Form bulunamadı.");
+        
+        const inputs = {};
+        if (form.length > 0) {
+            const actionAttr = form.attr("action");
+            if (actionAttr) {
+                formAction = actionAttr.startsWith("http") ? actionAttr : `https://www.turkcealtyazi.org${actionAttr}`;
+            }
+            form.find("input").each((i, el) => {
+                const name = $(el).attr("name");
+                if (name) inputs[name] = $(el).attr("value") || "";
+            });
+        } else {
+            // Yedek plan: Doğrudan standart parametreler
+            inputs.idid = subId;
         }
 
-        const inputs = {};
-        form.find("input").each((i, el) => {
-            const name = $(el).attr("name");
-            if (name) inputs[name] = $(el).attr("value") || "";
-        });
+        const postData = new URLSearchParams(inputs).toString();
+        console.log(`2. AŞAMA: Hedef URL: ${formAction} | Veri: ${postData}`);
+        console.log("3. AŞAMA: ZIP dosyası indiriliyor (Timeout 90 saniye)...");
 
-        const postData = qs.stringify(inputs);
-        console.log(`2. AŞAMA: Çerezler ve Şifreler hazır! Veri: ${postData}`);
-        console.log("3. AŞAMA: Aynı ScraperAPI oturumu ile ZIP indiriliyor (POST)...");
+        const scraperDownloadUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&keep_headers=true&url=${encodeURIComponent(formAction)}`;
 
-        const targetDownloadUrl = encodeURIComponent('https://www.turkcealtyazi.org/ind.php');
-        const scraperDownloadUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&session_number=${sessionNum}&keep_headers=true&url=${targetDownloadUrl}`;
-
-        // Hem Çerezleri (Cookie) hem de Referer'i ScraperAPI üzerinden siteye yediriyoruz
+        // Zaman aşımını 90 saniyeye çıkararak 499 hatasını tamamen ortadan kaldırıyoruz
         const zipRes = await axios.post(scraperDownloadUrl, postData, {
             headers: {
                 ...BROWSER_HEADERS,
@@ -134,21 +132,21 @@ app.get('/download/:subId.srt', async (req, res) => {
                 'Cookie': cookieString
             },
             responseType: 'arraybuffer',
-            timeout: 60000
+            timeout: 90000 
         });
 
         const buffer = Buffer.from(zipRes.data);
         const headerText = buffer.toString('utf8', 0, 4);
 
         if (headerText.startsWith('Rar!')) {
-            console.error(">>> HATA: Bu bir RAR dosyası!");
+            console.error(">>> HATA: RAR formatı desteklenmiyor.");
             return res.status(400).send("RAR formatı desteklenmiyor.");
         } else if (!headerText.startsWith('PK')) {
-            console.error(">>> HATA: ZIP dosyası gelmedi! Site HTML gönderdi.");
+            console.error(">>> HATA: Geçersiz dosya (HTML/Cloudflare engeli).");
             return res.status(500).send("Geçersiz dosya formatı.");
         }
 
-        console.log("4. AŞAMA: Geçerli ZIP yakalandı, SRT çıkartılıyor...");
+        console.log("4. AŞAMA: ZIP başarıyla alındı, SRT ayıklanıyor...");
         
         const zip = new AdmZip(buffer);
         const zipEntries = zip.getEntries();
@@ -162,7 +160,7 @@ app.get('/download/:subId.srt', async (req, res) => {
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Content-Disposition', `attachment; filename="${subId}.srt"`);
             res.send(utf8Srt);
-            console.log(">>> GÖREV TAMAMLANDI! Altyazı kusursuzca Nuvio'ya gönderildi! 🚀");
+            console.log(">>> GÖREV BAŞARIYLA TAMAMLANDI! Altyazı Nuvio'da! 🎉");
         } else {
             console.error("Hata: ZIP içinde .srt dosyası bulunamadı.");
             res.status(404).send("Altyazı dosyası bulunamadı.");
@@ -178,5 +176,5 @@ const addonRouter = getRouter(addonInterface);
 app.use("/", addonRouter);
 
 app.listen(PORT, () => {
-    console.log(`Bulut Pro Sunucu Aktif! Port: ${PORT}`);
+    console.log(`Pro Master Sunucu Aktif! Port: ${PORT}`);
 });
