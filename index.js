@@ -42,11 +42,13 @@ async function getSubtitlesFromTurkceAltyazi(imdbId, season, episode) {
     const targetUrl = encodeURIComponent(`https://www.turkcealtyazi.org/find.php?cat=sub&find=${imdbId}`);
     
     // ScraperAPI üzerinden Cloudflare'i aşarak istek atıyoruz (render=true diyerek JS'nin çalışmasını bekliyoruz)
-    const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${targetUrl}&render=true`;
+    // render=true kısmını sildik, sadece API ile bağlanıyoruz
+    const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${targetUrl}`;
     
     console.log("ScraperAPI üzerinden siteye bağlanılıyor...");
     
-    const response = await axios.get(scraperUrl, { timeout: 20000 }); // ScraperAPI biraz yavaş yanıt verebilir
+    // Süreyi 20 saniyeden 60 saniyeye çıkardık
+    const response = await axios.get(scraperUrl, { timeout: 60000 });
     const $ = cheerio.load(response.data);
     const results = [];
 
