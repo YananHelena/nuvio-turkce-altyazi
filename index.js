@@ -85,7 +85,7 @@ function createApp({
   });
 
   // Stremio altyazı isteklerini tüm varyasyonlarıyla (ekstra query parametreleri dahil) yakala
-  app.get('/subtitles/:type/:imdbId*.json', async (req, res) => {
+  app.get(['/subtitles/:type/:imdbId.json', '/subtitles/:type/:imdbId/:query.json'], async (req, res) => {
     let media;
     try {
       const fullId = req.params.imdbId + (req.params[0] || '');
